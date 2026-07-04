@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use errors::{Result, anyhow, bail};
 
 use std::path::PathBuf;

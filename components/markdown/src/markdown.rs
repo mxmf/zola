@@ -11,6 +11,7 @@ use pulldown_cmark as cmark;
 use pulldown_cmark_escape as cmark_escape;
 
 use crate::context::RenderContext;
+use crate::math::{render_display_math, render_inline_math};
 use errors::{Context, Error, Result};
 use pulldown_cmark_escape::escape_html;
 use regex::{Regex, RegexBuilder};
@@ -440,6 +441,10 @@ pub fn markdown_to_html(
     opts.insert(Options::ENABLE_TASKLISTS);
     opts.insert(Options::ENABLE_HEADING_ATTRIBUTES);
 
+    if context.config.markdown.math.enabled {
+        opts.insert(Options::ENABLE_MATH);
+    }
+
     if context.config.markdown.smart_punctuation {
         opts.insert(Options::ENABLE_SMART_PUNCTUATION);
     }
@@ -733,6 +738,28 @@ pub fn markdown_to_html(
                         event
                     });
                 }
+                Event::InlineMath(formula) => match render_inline_math(&formula) {
+                    Ok(html) => events.push(Event::Html(html.into())),
+                    Err(err) => {
+                        error = Some(Error::msg(format!(
+                            "Failed to render inline Typst math in {}: {}",
+                            context.current_page_path.unwrap_or("unknown"),
+                            err
+                        )));
+                        events.push(Event::Html("".into()));
+                    }
+                },
+                Event::DisplayMath(formula) => match render_display_math(&formula) {
+                    Ok(html) => events.push(Event::Html(html.into())),
+                    Err(err) => {
+                        error = Some(Error::msg(format!(
+                            "Failed to render display Typst math in {}: {}",
+                            context.current_page_path.unwrap_or("unknown"),
+                            err
+                        )));
+                        events.push(Event::Html("".into()));
+                    }
+                },
                 Event::Html(text) | Event::InlineHtml(text)
                     if !has_summary && MORE_DIVIDER_RE.is_match(text.as_ref()) =>
                 {

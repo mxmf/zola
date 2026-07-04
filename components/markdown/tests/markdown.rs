@@ -239,6 +239,61 @@ fn can_render_emojis() {
     assert_eq!(body, "<p>Hello, World! 😄</p>\n");
 }
 
+#[test]
+fn math_is_not_rendered_by_default() {
+    let body = common::render("Inline $a^2 + b^2 = c^2$ math.").unwrap().body;
+    assert!(!body.contains("zola-math"));
+    assert!(body.contains("$a^2 + b^2 = c^2$"));
+}
+
+#[test]
+fn can_render_inline_typst_math() {
+    let mut config = Config::default_for_test();
+    config.markdown.math.enabled = true;
+    let body = common::render_with_config("Inline $a^2 + b^2 = c^2$ math.", config).unwrap().body;
+    assert!(body.contains("zola-math-inline"));
+    assert!(body.contains("<math"));
+    assert!(body.contains("</math>"));
+    assert!(!body.contains("$a^2 + b^2 = c^2$"));
+}
+
+#[test]
+fn can_render_display_typst_math() {
+    let mut config = Config::default_for_test();
+    config.markdown.math.enabled = true;
+    let body =
+        common::render_with_config("$$\nintegral_0^1 x^2 dif x = 1 / 3\n$$", config).unwrap().body;
+    assert!(body.contains("zola-math-display"));
+    assert!(body.contains("<math"));
+    assert!(body.contains("display=\"block\""));
+    assert!(body.contains("</math>"));
+}
+
+#[test]
+fn invalid_typst_math_returns_error() {
+    let mut config = Config::default_for_test();
+    config.markdown.math.enabled = true;
+    let error = common::render_with_config("Inline $sqrt($ math.", config).unwrap_err();
+    assert!(error.to_string().contains("Failed to render inline Typst math in my_page.md"));
+}
+
+#[test]
+fn typst_math_works_with_summary_split() {
+    let mut config = Config::default_for_test();
+    config.markdown.math.enabled = true;
+    let rendered = common::render_with_config(
+        "Summary $a^2$ math.\n\n<!-- more -->\n\nBody $b^2$ math.",
+        config,
+    )
+    .unwrap();
+
+    let summary = rendered.summary.unwrap();
+    assert!(summary.contains("zola-math-inline"));
+    assert!(summary.contains("<math"));
+    assert!(rendered.body.contains("zola-math-inline"));
+    assert!(rendered.body.contains("Body"));
+}
+
 // https://github.com/getzola/zola/issues/747
 // https://github.com/getzola/zola/issues/816
 #[test]
@@ -464,16 +519,16 @@ fn github_alerts() {
     config.markdown.github_alerts = true;
 
     let markdown = r#"
-> [!NOTE]  
+> [!NOTE]
 > alert note
 
 > [!TIP]
 > alert tip
 
-> [!IMPORTANT]  
+> [!IMPORTANT]
 > alert important
 
-> [!WARNING]  
+> [!WARNING]
 > alert warning
 
 > [!CAUTION]
