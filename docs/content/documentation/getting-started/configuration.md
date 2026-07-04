@@ -176,6 +176,13 @@ github_alerts = false
 # See "Internal links & deep linking" in the documentation for more information.
 insert_anchor_links = "none"
 
+# Math rendering configuration (optional)
+[markdown.math]
+# When set to "true", Markdown math formulas are rendered with the configured engine.
+# The current engine outputs MathML from Typst math syntax.
+enabled = false
+engine = "typst"
+
 # Syntax highlighting configuration (optional)
 [markdown.highlighting]
 # When set to "true", missing highlight languages are treated as errors. Defaults to false but recommended to set to true.
