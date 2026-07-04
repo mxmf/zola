@@ -1,7 +1,8 @@
 use errors::{Result, anyhow, bail};
 
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::LazyLock;
+use std::sync::{LazyLock, RwLock};
 use typst::diag::FileError;
 use typst::foundations::{Bytes, Datetime, Duration};
 use typst::syntax::{FileId, RootedPath, Source, VirtualPath, VirtualRoot};
@@ -20,7 +21,19 @@ static TYPST_LIBRARY: LazyLock<LazyHash<Library>> = LazyLock::new(|| {
     LazyHash::new(Library::builder().with_features(Features::from_iter([Feature::Html])).build())
 });
 
-#[derive(Debug, Clone, Copy)]
+const CACHE_VERSION: u8 = 1;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct MathCacheKey {
+    version: u8,
+    formula: String,
+    mode: MathMode,
+}
+
+static MATH_CACHE: LazyLock<RwLock<HashMap<MathCacheKey, String>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum MathMode {
     Inline,
     Display,
@@ -109,6 +122,12 @@ impl World for MathWorld {
 }
 
 fn render_math(formula: &str, mode: MathMode) -> Result<String> {
+    let cache_key = MathCacheKey { version: CACHE_VERSION, formula: formula.to_owned(), mode };
+
+    if let Some(cached) = MATH_CACHE.read().unwrap().get(&cache_key).cloned() {
+        return Ok(cached);
+    }
+
     let source = mode.wrap_source(formula);
     let world = MathWorld::new(source)?;
     let warned = typst::compile::<HtmlDocument>(&world);
@@ -130,7 +149,9 @@ fn render_math(formula: &str, mode: MathMode) -> Result<String> {
         anyhow!("Typst failed to encode math formula `{}` as HTML: {}", formula, messages)
     })?;
     let mathml = extract_mathml(&html)?;
-    Ok(mode.wrap_html(mathml))
+    let rendered = mode.wrap_html(mathml);
+    MATH_CACHE.write().unwrap().insert(cache_key, rendered.clone());
+    Ok(rendered)
 }
 
 fn extract_mathml(html: &str) -> Result<String> {
@@ -162,6 +183,14 @@ pub fn render_display_math(formula: &str) -> Result<String> {
 mod tests {
     use super::*;
 
+    fn cache_contains(formula: &str, mode: MathMode) -> bool {
+        MATH_CACHE.read().unwrap().contains_key(&MathCacheKey {
+            version: CACHE_VERSION,
+            formula: formula.to_owned(),
+            mode,
+        })
+    }
+
     #[test]
     fn renders_inline_mathml() {
         let html = render_inline_math("a^2 + b^2 = c^2").unwrap();
@@ -183,5 +212,16 @@ mod tests {
     fn invalid_formula_returns_error() {
         let error = render_inline_math("sqrt(").unwrap_err();
         assert!(error.to_string().contains("Typst failed to compile math formula"));
+        assert!(!cache_contains("sqrt(", MathMode::Inline));
+    }
+
+    #[test]
+    fn caches_successful_renders() {
+        let formula = "x^2 + y^2 + z^2";
+        let first = render_inline_math(formula).unwrap();
+        let second = render_inline_math(formula).unwrap();
+
+        assert_eq!(first, second);
+        assert!(cache_contains(formula, MathMode::Inline));
     }
 }
