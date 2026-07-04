@@ -1,3 +1,4 @@
+use config::MathSyntax;
 use errors::{Result, anyhow, bail};
 
 use flate2::read::GzDecoder;
@@ -24,6 +25,7 @@ static TYPST_LIBRARY: LazyLock<LazyHash<Library>> = LazyLock::new(|| {
 });
 
 const CACHE_VERSION: u8 = 1;
+const DEFAULT_MITEX_VERSION: &str = "0.2.7";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct MathCacheKey {
@@ -31,6 +33,8 @@ struct MathCacheKey {
     formula: String,
     mode: MathMode,
     preamble: String,
+    syntax: MathSyntax,
+    mitex_version: String,
     local_import_root: Option<PathBuf>,
     package_cache_dir: Option<PathBuf>,
 }
@@ -52,10 +56,28 @@ impl MathMode {
         }
     }
 
-    fn wrap_source(self, formula: &str, preamble: Option<&str>) -> String {
-        let formula = match self {
-            MathMode::Inline => format!("${formula}$"),
-            MathMode::Display => format!("$ {formula} $"),
+    fn wrap_source(
+        self,
+        formula: &str,
+        preamble: Option<&str>,
+        syntax: MathSyntax,
+        mitex_version: &str,
+    ) -> String {
+        let formula = match (syntax, self) {
+            (MathSyntax::Typst, MathMode::Inline) => format!("${formula}$"),
+            (MathSyntax::Typst, MathMode::Display) => format!("$ {formula} $"),
+            (MathSyntax::Latex, MathMode::Inline) => {
+                format!(
+                    "#import \"@preview/mitex:{mitex_version}\": mi\n#mi({})",
+                    typst_raw_string(formula)
+                )
+            }
+            (MathSyntax::Latex, MathMode::Display) => {
+                format!(
+                    "#import \"@preview/mitex:{mitex_version}\": mitex\n#mitex({})",
+                    typst_raw_string(formula)
+                )
+            }
         };
 
         match preamble {
@@ -144,6 +166,22 @@ impl MathWorld {
             VirtualRoot::Package(_) => self.resolve_package_path(id),
         }
     }
+}
+
+fn typst_raw_string(value: &str) -> String {
+    let mut ticks = 1;
+    let mut run = 0;
+    for character in value.chars() {
+        if character == '`' {
+            run += 1;
+            ticks = ticks.max(run + 1);
+        } else {
+            run = 0;
+        }
+    }
+
+    let delimiter = "`".repeat(ticks);
+    format!("{delimiter}{value}{delimiter}")
 }
 
 fn package_dir(cache_dir: &Path, package: &typst::syntax::package::PackageSpec) -> PathBuf {
@@ -283,15 +321,20 @@ fn render_math(
     formula: &str,
     mode: MathMode,
     preamble: Option<&str>,
+    syntax: MathSyntax,
+    mitex_version: Option<&str>,
     local_import_root: Option<&Path>,
     package_cache_dir: Option<&Path>,
 ) -> Result<String> {
     let preamble = preamble.filter(|preamble| !preamble.trim().is_empty()).unwrap_or_default();
+    let mitex_version = mitex_version.unwrap_or(DEFAULT_MITEX_VERSION);
     let cache_key = MathCacheKey {
         version: CACHE_VERSION,
         formula: formula.to_owned(),
         mode,
         preamble: preamble.to_owned(),
+        syntax,
+        mitex_version: mitex_version.to_owned(),
         local_import_root: local_import_root.map(Path::to_path_buf),
         package_cache_dir: package_cache_dir.map(Path::to_path_buf),
     };
@@ -301,7 +344,7 @@ fn render_math(
         return Ok(cached);
     }
 
-    let source = mode.wrap_source(formula, Some(preamble));
+    let source = mode.wrap_source(formula, Some(preamble), syntax, mitex_version);
     let world = MathWorld::new(source, local_import_root, package_cache_dir)?;
     let warned = typst::compile::<HtmlDocument>(&world);
     let document = warned.output.map_err(|diagnostics| {
@@ -349,19 +392,39 @@ fn extract_mathml(html: &str) -> Result<String> {
 pub fn render_inline_math(
     formula: &str,
     preamble: Option<&str>,
+    syntax: MathSyntax,
+    mitex_version: Option<&str>,
     local_import_root: Option<&Path>,
     package_cache_dir: Option<&Path>,
 ) -> Result<String> {
-    render_math(formula, MathMode::Inline, preamble, local_import_root, package_cache_dir)
+    render_math(
+        formula,
+        MathMode::Inline,
+        preamble,
+        syntax,
+        mitex_version,
+        local_import_root,
+        package_cache_dir,
+    )
 }
 
 pub fn render_display_math(
     formula: &str,
     preamble: Option<&str>,
+    syntax: MathSyntax,
+    mitex_version: Option<&str>,
     local_import_root: Option<&Path>,
     package_cache_dir: Option<&Path>,
 ) -> Result<String> {
-    render_math(formula, MathMode::Display, preamble, local_import_root, package_cache_dir)
+    render_math(
+        formula,
+        MathMode::Display,
+        preamble,
+        syntax,
+        mitex_version,
+        local_import_root,
+        package_cache_dir,
+    )
 }
 
 #[cfg(test)]
@@ -374,6 +437,8 @@ mod tests {
             formula: formula.to_owned(),
             mode,
             preamble: preamble.unwrap_or_default().to_owned(),
+            syntax: MathSyntax::Typst,
+            mitex_version: DEFAULT_MITEX_VERSION.to_owned(),
             local_import_root: None,
             package_cache_dir: None,
         })
@@ -381,7 +446,8 @@ mod tests {
 
     #[test]
     fn renders_inline_mathml() {
-        let html = render_inline_math("a^2 + b^2 = c^2", None, None, None).unwrap();
+        let html = render_inline_math("a^2 + b^2 = c^2", None, MathSyntax::Typst, None, None, None)
+            .unwrap();
         assert!(html.contains("zola-math-inline"));
         assert!(html.contains("<math"));
         assert!(html.contains("</math>"));
@@ -389,7 +455,15 @@ mod tests {
 
     #[test]
     fn renders_display_mathml() {
-        let html = render_display_math("integral_0^1 x^2 dif x = 1 / 3", None, None, None).unwrap();
+        let html = render_display_math(
+            "integral_0^1 x^2 dif x = 1 / 3",
+            None,
+            MathSyntax::Typst,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         assert!(html.contains("zola-math-display"));
         assert!(html.contains("<math"));
         assert!(html.contains("display=\"block\""));
@@ -398,7 +472,8 @@ mod tests {
 
     #[test]
     fn invalid_formula_returns_error() {
-        let error = render_inline_math("sqrt(", None, None, None).unwrap_err();
+        let error =
+            render_inline_math("sqrt(", None, MathSyntax::Typst, None, None, None).unwrap_err();
         assert!(error.to_string().contains("Typst failed to compile math formula"));
         assert!(!cache_contains("sqrt(", MathMode::Inline, None));
     }
@@ -406,8 +481,9 @@ mod tests {
     #[test]
     fn caches_successful_renders() {
         let formula = "x^2 + y^2 + z^2";
-        let first = render_inline_math(formula, None, None, None).unwrap();
-        let second = render_inline_math(formula, None, None, None).unwrap();
+        let first = render_inline_math(formula, None, MathSyntax::Typst, None, None, None).unwrap();
+        let second =
+            render_inline_math(formula, None, MathSyntax::Typst, None, None, None).unwrap();
 
         assert_eq!(first, second);
         assert!(cache_contains(formula, MathMode::Inline, None));
@@ -416,7 +492,8 @@ mod tests {
     #[test]
     fn renders_with_preamble() {
         let preamble = "#let sq(x) = $ #x^2 $";
-        let html = render_inline_math("sq(a)", Some(preamble), None, None).unwrap();
+        let html = render_inline_math("sq(a)", Some(preamble), MathSyntax::Typst, None, None, None)
+            .unwrap();
 
         assert!(html.contains("zola-math-inline"));
         assert!(html.contains("<math"));
@@ -433,8 +510,15 @@ mod tests {
         std::fs::create_dir(&dir).unwrap();
         std::fs::write(dir.join("math.typ"), "#let sq(x) = $ #x^2 $").unwrap();
 
-        let html = render_inline_math("sq(a)", Some("#import \"math.typ\": sq"), Some(&dir), None)
-            .unwrap();
+        let html = render_inline_math(
+            "sq(a)",
+            Some("#import \"math.typ\": sq"),
+            MathSyntax::Typst,
+            None,
+            Some(&dir),
+            None,
+        )
+        .unwrap();
 
         assert!(html.contains("zola-math-inline"));
         assert!(html.contains("<math"));
@@ -452,13 +536,39 @@ mod tests {
         let dir = std::env::temp_dir().join(unique);
         std::fs::create_dir(&dir).unwrap();
 
-        let error =
-            render_inline_math("a", Some("#import \"../outside.typ\": *"), Some(&dir), None)
-                .unwrap_err();
+        let error = render_inline_math(
+            "a",
+            Some("#import \"../outside.typ\": *"),
+            MathSyntax::Typst,
+            None,
+            Some(&dir),
+            None,
+        )
+        .unwrap_err();
 
         assert!(error.to_string().contains("Typst failed to compile math formula"));
 
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn fake_package(cache: &Path, name: &str, version: &str, source: &str) -> PathBuf {
+        let package = cache.join(format!("preview/{name}/{version}"));
+        std::fs::create_dir_all(&package).unwrap();
+        std::fs::write(
+            package.join("typst.toml"),
+            format!(
+                r#"
+[package]
+name = "{name}"
+version = "{version}"
+entrypoint = "lib.typ"
+authors = []
+"#
+            ),
+        )
+        .unwrap();
+        std::fs::write(package.join("lib.typ"), source).unwrap();
+        package
     }
 
     #[test]
@@ -468,24 +578,13 @@ mod tests {
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
         );
         let cache = std::env::temp_dir().join(unique);
-        let package = cache.join("preview/testpkg/0.1.0");
-        std::fs::create_dir_all(&package).unwrap();
-        std::fs::write(
-            package.join("typst.toml"),
-            r#"
-[package]
-name = "testpkg"
-version = "0.1.0"
-entrypoint = "lib.typ"
-authors = []
-"#,
-        )
-        .unwrap();
-        std::fs::write(package.join("lib.typ"), "#let sq(x) = $ #x^2 $").unwrap();
+        fake_package(&cache, "testpkg", "0.1.0", "#let sq(x) = $ #x^2 $");
 
         let html = render_inline_math(
             "sq(a)",
             Some("#import \"@preview/testpkg:0.1.0\": sq"),
+            MathSyntax::Typst,
+            None,
             None,
             Some(&cache),
         )
@@ -498,6 +597,41 @@ authors = []
             MathMode::Inline,
             Some("#import \"@preview/testpkg:0.1.0\": sq")
         ));
+
+        std::fs::remove_dir_all(cache).unwrap();
+    }
+
+    #[test]
+    fn renders_latex_with_cached_mitex_package() {
+        let unique = format!(
+            "zola-typst-math-latex-test-{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        );
+        let cache = std::env::temp_dir().join(unique);
+        fake_package(
+            &cache,
+            "mitex",
+            DEFAULT_MITEX_VERSION,
+            "#let mi(body) = $ x $\n#let mitex(body) = $ x $",
+        );
+
+        let inline =
+            render_inline_math(r"\frac{1}{2}", None, MathSyntax::Latex, None, None, Some(&cache))
+                .unwrap();
+        let display = render_display_math(
+            r"\alpha + \beta",
+            None,
+            MathSyntax::Latex,
+            None,
+            None,
+            Some(&cache),
+        )
+        .unwrap();
+
+        assert!(inline.contains("zola-math-inline"));
+        assert!(inline.contains("<math"));
+        assert!(display.contains("zola-math-display"));
+        assert!(display.contains("display=\"block\""));
 
         std::fs::remove_dir_all(cache).unwrap();
     }

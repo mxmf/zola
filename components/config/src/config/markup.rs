@@ -138,6 +138,19 @@ pub enum MathEngine {
     Typst,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MathSyntax {
+    Typst,
+    Latex,
+}
+
+impl Default for MathSyntax {
+    fn default() -> Self {
+        Self::Typst
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Math {
@@ -145,13 +158,20 @@ pub struct Math {
     pub enabled: bool,
     /// The renderer to use for Markdown math formulas.
     pub engine: MathEngine,
+    /// The formula syntax used in Markdown math formulas.
+    pub syntax: MathSyntax,
     /// Typst-specific math rendering configuration.
     pub typst: TypstMath,
 }
 
 impl Default for Math {
     fn default() -> Self {
-        Self { enabled: false, engine: MathEngine::Typst, typst: TypstMath::default() }
+        Self {
+            enabled: false,
+            engine: MathEngine::Typst,
+            syntax: MathSyntax::Typst,
+            typst: TypstMath::default(),
+        }
     }
 }
 
@@ -168,6 +188,8 @@ pub struct TypstMath {
     pub packages: bool,
     /// Directory used to cache downloaded Typst packages, relative to the config file directory.
     pub package_cache: Option<String>,
+    /// MiTeX package version used when `markdown.math.syntax` is `latex`.
+    pub mitex_version: Option<String>,
     /// Canonical root used to resolve local imports.
     #[serde(skip)]
     pub local_import_root: Option<PathBuf>,
@@ -321,6 +343,7 @@ mod tests {
         let markdown = Markdown::default();
         assert!(!markdown.math.enabled);
         assert_eq!(markdown.math.engine, MathEngine::Typst);
+        assert_eq!(markdown.math.syntax, MathSyntax::Typst);
         assert_eq!(markdown.math.typst, TypstMath::default());
     }
 
@@ -331,12 +354,14 @@ mod tests {
             [math]
             enabled = true
             engine = "typst"
+            syntax = "latex"
             "#,
         )
         .unwrap();
 
         assert!(markdown.math.enabled);
         assert_eq!(markdown.math.engine, MathEngine::Typst);
+        assert_eq!(markdown.math.syntax, MathSyntax::Latex);
     }
 
     #[test]
@@ -352,6 +377,7 @@ mod tests {
             allow_local_imports = true
             packages = true
             package_cache = ".cache/typst"
+            mitex_version = "0.2.7"
             "##,
         )
         .unwrap();
@@ -361,6 +387,7 @@ mod tests {
         assert!(markdown.math.typst.allow_local_imports);
         assert!(markdown.math.typst.packages);
         assert_eq!(markdown.math.typst.package_cache.as_deref(), Some(".cache/typst"));
+        assert_eq!(markdown.math.typst.mitex_version.as_deref(), Some("0.2.7"));
     }
 
     #[test]
@@ -379,6 +406,7 @@ mod tests {
             allow_local_imports: false,
             packages: false,
             package_cache: None,
+            mitex_version: None,
             local_import_root: None,
             package_cache_dir: None,
         };

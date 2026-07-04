@@ -138,6 +138,32 @@ Browsers render MathML natively. Themes can target the wrapper classes to adjust
 
 ## LaTeX compatibility
 
-The built-in renderer expects Typst syntax. LaTeX input such as `\frac{1}{2}` is not supported by this setting.
+By default, the built-in renderer expects Typst syntax. To write formulas in LaTeX syntax, enable MiTeX through Typst package support:
 
-Support for LaTeX through Typst packages such as `mitex` may be added in a future release.
+```toml
+[markdown.math]
+enabled = true
+engine = "typst"
+syntax = "latex"
+
+[markdown.math.typst]
+packages = true
+```
+
+Zola imports `@preview/mitex:0.2.7` automatically in LaTeX mode. You can override the MiTeX version:
+
+```toml
+[markdown.math.typst]
+packages = true
+mitex_version = "0.2.7"
+```
+
+Then Markdown formulas can use LaTeX input:
+
+```md
+Inline $\frac{1}{2}$ and display:
+
+$$
+\alpha + \beta
+$$
+```

@@ -9,7 +9,8 @@ pub use crate::config::{
     link_checker::LinkChecker,
     link_checker::LinkCheckerLevel,
     markup::{
-        HighlightConfig, HighlightStyle, Highlighting, Markdown, Math, MathEngine, TypstMath,
+        HighlightConfig, HighlightStyle, Highlighting, Markdown, Math, MathEngine, MathSyntax,
+        TypstMath,
     },
     search::{IndexFormat, Search},
     slugify::Slugify,
