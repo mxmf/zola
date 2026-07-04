@@ -31,6 +31,36 @@ integral_0^1 x^2 dif x = 1 / 3
 $$
 ```
 
+## Typst preamble
+
+You can prepend Typst definitions to every formula with `preamble`:
+
+```toml
+[markdown.math]
+enabled = true
+engine = "typst"
+
+[markdown.math.typst]
+preamble = "#let sq(x) = $ #x^2 $"
+```
+
+Then Markdown formulas can use those definitions:
+
+```md
+The square is $sq(a)$.
+```
+
+For longer preambles, use a file path relative to the directory containing `config.toml`:
+
+```toml
+[markdown.math.typst]
+preamble_file = "typst-math.typ"
+```
+
+If both `preamble` and `preamble_file` are set, Zola prepends the inline `preamble` first, followed by the file contents.
+
+## HTML output
+
 The generated HTML contains MathML, wrapped in Zola-specific classes:
 
 ```html

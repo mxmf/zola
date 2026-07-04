@@ -2,7 +2,8 @@ use giallo::{HighlightOptions, Registry, ThemeVariant};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-use errors::{Result, bail};
+use errors::{Context, Result, bail};
+use utils::fs::read_file;
 use utils::types::InsertAnchor;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -144,11 +145,40 @@ pub struct Math {
     pub enabled: bool,
     /// The renderer to use for Markdown math formulas.
     pub engine: MathEngine,
+    /// Typst-specific math rendering configuration.
+    pub typst: TypstMath,
 }
 
 impl Default for Math {
     fn default() -> Self {
-        Self { enabled: false, engine: MathEngine::Typst }
+        Self { enabled: false, engine: MathEngine::Typst, typst: TypstMath::default() }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TypstMath {
+    /// Typst code prepended before every formula.
+    pub preamble: Option<String>,
+    /// Path to a Typst preamble file, relative to the config file directory.
+    pub preamble_file: Option<String>,
+}
+
+impl TypstMath {
+    pub fn init(&mut self, config_dir: &Path) -> Result<()> {
+        let Some(preamble_file) = &self.preamble_file else {
+            return Ok(());
+        };
+
+        let file_content = read_file(&config_dir.join(preamble_file))
+            .with_context(|| format!("Failed to load Typst math preamble `{preamble_file}`"))?;
+
+        self.preamble = Some(match self.preamble.take() {
+            Some(inline) if !inline.trim().is_empty() => format!("{inline}\n{file_content}"),
+            _ => file_content,
+        });
+
+        Ok(())
     }
 }
 
@@ -270,6 +300,7 @@ mod tests {
         let markdown = Markdown::default();
         assert!(!markdown.math.enabled);
         assert_eq!(markdown.math.engine, MathEngine::Typst);
+        assert_eq!(markdown.math.typst, TypstMath::default());
     }
 
     #[test]
@@ -288,12 +319,67 @@ mod tests {
     }
 
     #[test]
+    fn can_configure_typst_math_preamble() {
+        let markdown: Markdown = toml::from_str(
+            r##"
+            [math]
+            enabled = true
+
+            [math.typst]
+            preamble = "#let sq(x) = $ #x^2 $"
+            preamble_file = "math.typ"
+            "##,
+        )
+        .unwrap();
+
+        assert_eq!(markdown.math.typst.preamble.as_deref(), Some("#let sq(x) = $ #x^2 $"));
+        assert_eq!(markdown.math.typst.preamble_file.as_deref(), Some("math.typ"));
+    }
+
+    #[test]
+    fn loads_typst_math_preamble_file() {
+        let unique = format!(
+            "zola-typst-math-test-{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        );
+        let dir = std::env::temp_dir().join(unique);
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("math.typ"), "#let cube(x) = $ #x^3 $").unwrap();
+
+        let mut typst = TypstMath {
+            preamble: Some("#let sq(x) = $ #x^2 $".to_string()),
+            preamble_file: Some("math.typ".to_string()),
+        };
+        typst.init(&dir).unwrap();
+
+        assert_eq!(
+            typst.preamble.as_deref(),
+            Some("#let sq(x) = $ #x^2 $\n#let cube(x) = $ #x^3 $")
+        );
+
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn math_rejects_unknown_fields() {
         let error = toml::from_str::<Markdown>(
             r#"
             [math]
             enabled = true
             engine = "typst"
+            unexpected = true
+            "#,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn typst_math_rejects_unknown_fields() {
+        let error = toml::from_str::<Markdown>(
+            r#"
+            [math.typst]
             unexpected = true
             "#,
         )

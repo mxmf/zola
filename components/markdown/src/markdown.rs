@@ -738,7 +738,10 @@ pub fn markdown_to_html(
                         event
                     });
                 }
-                Event::InlineMath(formula) => match render_inline_math(&formula) {
+                Event::InlineMath(formula) => match render_inline_math(
+                    &formula,
+                    context.config.markdown.math.typst.preamble.as_deref(),
+                ) {
                     Ok(html) => events.push(Event::Html(html.into())),
                     Err(err) => {
                         error = Some(Error::msg(format!(
@@ -749,7 +752,10 @@ pub fn markdown_to_html(
                         events.push(Event::Html("".into()));
                     }
                 },
-                Event::DisplayMath(formula) => match render_display_math(&formula) {
+                Event::DisplayMath(formula) => match render_display_math(
+                    &formula,
+                    context.config.markdown.math.typst.preamble.as_deref(),
+                ) {
                     Ok(html) => events.push(Event::Html(html.into())),
                     Err(err) => {
                         error = Some(Error::msg(format!(
@@ -1008,6 +1014,20 @@ mod tests {
             assert_eq!(continue_reading, CONTINUE_READING);
             assert_eq!(body, &bottom_rendered);
         }
+    }
+
+    #[test]
+    fn renders_math_with_typst_preamble() {
+        let mut config = Config::default();
+        config.markdown.math.enabled = true;
+        config.markdown.math.typst.preamble = Some("#let sq(x) = $ #x^2 $".to_string());
+        let context = RenderContext::from_config(&config);
+
+        let rendered = markdown_to_html("Inline $sq(a)$.", &context, vec![]).unwrap();
+
+        assert!(rendered.body.contains("zola-math-inline"));
+        assert!(rendered.body.contains("<math"));
+        assert!(!rendered.body.contains("sq(a)"));
     }
 
     #[test]

@@ -28,6 +28,7 @@ struct MathCacheKey {
     version: u8,
     formula: String,
     mode: MathMode,
+    preamble: String,
 }
 
 static MATH_CACHE: LazyLock<RwLock<HashMap<MathCacheKey, String>>> =
@@ -47,10 +48,15 @@ impl MathMode {
         }
     }
 
-    fn wrap_source(self, formula: &str) -> String {
-        match self {
+    fn wrap_source(self, formula: &str, preamble: Option<&str>) -> String {
+        let formula = match self {
             MathMode::Inline => format!("${formula}$"),
             MathMode::Display => format!("$ {formula} $"),
+        };
+
+        match preamble {
+            Some(preamble) if !preamble.trim().is_empty() => format!("{preamble}\n{formula}"),
+            _ => formula,
         }
     }
 
@@ -121,14 +127,20 @@ impl World for MathWorld {
     }
 }
 
-fn render_math(formula: &str, mode: MathMode) -> Result<String> {
-    let cache_key = MathCacheKey { version: CACHE_VERSION, formula: formula.to_owned(), mode };
+fn render_math(formula: &str, mode: MathMode, preamble: Option<&str>) -> Result<String> {
+    let preamble = preamble.filter(|preamble| !preamble.trim().is_empty()).unwrap_or_default();
+    let cache_key = MathCacheKey {
+        version: CACHE_VERSION,
+        formula: formula.to_owned(),
+        mode,
+        preamble: preamble.to_owned(),
+    };
 
     if let Some(cached) = MATH_CACHE.read().unwrap().get(&cache_key).cloned() {
         return Ok(cached);
     }
 
-    let source = mode.wrap_source(formula);
+    let source = mode.wrap_source(formula, Some(preamble));
     let world = MathWorld::new(source)?;
     let warned = typst::compile::<HtmlDocument>(&world);
     let document = warned.output.map_err(|diagnostics| {
@@ -171,29 +183,30 @@ fn extract_mathml(html: &str) -> Result<String> {
     Ok(mathml)
 }
 
-pub fn render_inline_math(formula: &str) -> Result<String> {
-    render_math(formula, MathMode::Inline)
+pub fn render_inline_math(formula: &str, preamble: Option<&str>) -> Result<String> {
+    render_math(formula, MathMode::Inline, preamble)
 }
 
-pub fn render_display_math(formula: &str) -> Result<String> {
-    render_math(formula, MathMode::Display)
+pub fn render_display_math(formula: &str, preamble: Option<&str>) -> Result<String> {
+    render_math(formula, MathMode::Display, preamble)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn cache_contains(formula: &str, mode: MathMode) -> bool {
+    fn cache_contains(formula: &str, mode: MathMode, preamble: Option<&str>) -> bool {
         MATH_CACHE.read().unwrap().contains_key(&MathCacheKey {
             version: CACHE_VERSION,
             formula: formula.to_owned(),
             mode,
+            preamble: preamble.unwrap_or_default().to_owned(),
         })
     }
 
     #[test]
     fn renders_inline_mathml() {
-        let html = render_inline_math("a^2 + b^2 = c^2").unwrap();
+        let html = render_inline_math("a^2 + b^2 = c^2", None).unwrap();
         assert!(html.contains("zola-math-inline"));
         assert!(html.contains("<math"));
         assert!(html.contains("</math>"));
@@ -201,7 +214,7 @@ mod tests {
 
     #[test]
     fn renders_display_mathml() {
-        let html = render_display_math("integral_0^1 x^2 dif x = 1 / 3").unwrap();
+        let html = render_display_math("integral_0^1 x^2 dif x = 1 / 3", None).unwrap();
         assert!(html.contains("zola-math-display"));
         assert!(html.contains("<math"));
         assert!(html.contains("display=\"block\""));
@@ -210,18 +223,28 @@ mod tests {
 
     #[test]
     fn invalid_formula_returns_error() {
-        let error = render_inline_math("sqrt(").unwrap_err();
+        let error = render_inline_math("sqrt(", None).unwrap_err();
         assert!(error.to_string().contains("Typst failed to compile math formula"));
-        assert!(!cache_contains("sqrt(", MathMode::Inline));
+        assert!(!cache_contains("sqrt(", MathMode::Inline, None));
     }
 
     #[test]
     fn caches_successful_renders() {
         let formula = "x^2 + y^2 + z^2";
-        let first = render_inline_math(formula).unwrap();
-        let second = render_inline_math(formula).unwrap();
+        let first = render_inline_math(formula, None).unwrap();
+        let second = render_inline_math(formula, None).unwrap();
 
         assert_eq!(first, second);
-        assert!(cache_contains(formula, MathMode::Inline));
+        assert!(cache_contains(formula, MathMode::Inline, None));
+    }
+
+    #[test]
+    fn renders_with_preamble() {
+        let preamble = "#let sq(x) = $ #x^2 $";
+        let html = render_inline_math("sq(a)", Some(preamble)).unwrap();
+
+        assert!(html.contains("zola-math-inline"));
+        assert!(html.contains("<math"));
+        assert!(cache_contains("sq(a)", MathMode::Inline, Some(preamble)));
     }
 }

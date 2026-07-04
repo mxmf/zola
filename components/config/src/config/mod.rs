@@ -192,6 +192,7 @@ impl Config {
             highlight.init(config_dir)?;
         }
 
+        config.markdown.math.typst.init(config_dir)?;
         config.markdown.validate_external_links_class()?;
 
         Ok(config)
@@ -523,6 +524,36 @@ base_url = "https://replace-this-with-your-url.com"
 
         let config = Config::parse(config).unwrap();
         assert_eq!(config.title.unwrap(), "My site".to_string());
+    }
+
+    #[test]
+    fn from_file_loads_typst_math_preamble_file() {
+        let unique = format!(
+            "zola-config-typst-math-test-{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        );
+        let dir = std::env::temp_dir().join(unique);
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("math.typ"), "#let cube(x) = $ #x^3 $").unwrap();
+        std::fs::write(
+            dir.join("config.toml"),
+            r##"
+base_url = "https://replace-this-with-your-url.com"
+
+[markdown.math.typst]
+preamble = "#let sq(x) = $ #x^2 $"
+preamble_file = "math.typ"
+            "##,
+        )
+        .unwrap();
+
+        let config = Config::from_file(dir.join("config.toml")).unwrap();
+        assert_eq!(
+            config.markdown.math.typst.preamble.as_deref(),
+            Some("#let sq(x) = $ #x^2 $\n#let cube(x) = $ #x^3 $")
+        );
+
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
