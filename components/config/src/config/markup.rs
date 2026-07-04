@@ -131,6 +131,27 @@ impl Highlighting {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MathEngine {
+    Typst,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Math {
+    /// Whether to render Markdown math formulas with the configured engine.
+    pub enabled: bool,
+    /// The renderer to use for Markdown math formulas.
+    pub engine: MathEngine,
+}
+
+impl Default for Math {
+    fn default() -> Self {
+        Self { enabled: false, engine: MathEngine::Typst }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Markdown {
@@ -162,6 +183,8 @@ pub struct Markdown {
     pub insert_anchor_links: InsertAnchor,
     /// Whether to enable GitHub-style alerts
     pub github_alerts: bool,
+    /// Math rendering configuration.
+    pub math: Math,
 }
 
 impl Markdown {
@@ -233,6 +256,49 @@ impl Default for Markdown {
             lazy_async_image: false,
             insert_anchor_links: InsertAnchor::None,
             github_alerts: false,
+            math: Math::default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn math_is_disabled_by_default() {
+        let markdown = Markdown::default();
+        assert!(!markdown.math.enabled);
+        assert_eq!(markdown.math.engine, MathEngine::Typst);
+    }
+
+    #[test]
+    fn can_enable_typst_math() {
+        let markdown: Markdown = toml::from_str(
+            r#"
+            [math]
+            enabled = true
+            engine = "typst"
+            "#,
+        )
+        .unwrap();
+
+        assert!(markdown.math.enabled);
+        assert_eq!(markdown.math.engine, MathEngine::Typst);
+    }
+
+    #[test]
+    fn math_rejects_unknown_fields() {
+        let error = toml::from_str::<Markdown>(
+            r#"
+            [math]
+            enabled = true
+            engine = "typst"
+            unexpected = true
+            "#,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("unknown field"));
     }
 }
