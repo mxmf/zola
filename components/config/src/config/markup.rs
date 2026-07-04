@@ -164,9 +164,16 @@ pub struct TypstMath {
     pub preamble_file: Option<String>,
     /// Whether Typst math can import files from the site directory.
     pub allow_local_imports: bool,
+    /// Whether Typst math can import packages from the Typst Universe.
+    pub packages: bool,
+    /// Directory used to cache downloaded Typst packages, relative to the config file directory.
+    pub package_cache: Option<String>,
     /// Canonical root used to resolve local imports.
     #[serde(skip)]
     pub local_import_root: Option<PathBuf>,
+    /// Directory used to resolve cached Typst Universe packages.
+    #[serde(skip)]
+    pub package_cache_dir: Option<PathBuf>,
 }
 
 impl TypstMath {
@@ -185,6 +192,11 @@ impl TypstMath {
             self.local_import_root = Some(config_dir.canonicalize().with_context(|| {
                 format!("Failed to canonicalize Typst math import root `{}`", config_dir.display())
             })?);
+        }
+
+        if self.packages {
+            let package_cache = self.package_cache.as_deref().unwrap_or(".zola/typst-packages");
+            self.package_cache_dir = Some(config_dir.join(package_cache));
         }
 
         Ok(())
@@ -338,6 +350,8 @@ mod tests {
             preamble = "#let sq(x) = $ #x^2 $"
             preamble_file = "math.typ"
             allow_local_imports = true
+            packages = true
+            package_cache = ".cache/typst"
             "##,
         )
         .unwrap();
@@ -345,6 +359,8 @@ mod tests {
         assert_eq!(markdown.math.typst.preamble.as_deref(), Some("#let sq(x) = $ #x^2 $"));
         assert_eq!(markdown.math.typst.preamble_file.as_deref(), Some("math.typ"));
         assert!(markdown.math.typst.allow_local_imports);
+        assert!(markdown.math.typst.packages);
+        assert_eq!(markdown.math.typst.package_cache.as_deref(), Some(".cache/typst"));
     }
 
     #[test]
@@ -361,7 +377,10 @@ mod tests {
             preamble: Some("#let sq(x) = $ #x^2 $".to_string()),
             preamble_file: Some("math.typ".to_string()),
             allow_local_imports: false,
+            packages: false,
+            package_cache: None,
             local_import_root: None,
+            package_cache_dir: None,
         };
         typst.init(&dir).unwrap();
 

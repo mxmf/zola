@@ -544,6 +544,8 @@ base_url = "https://replace-this-with-your-url.com"
 preamble = "#let sq(x) = $ #x^2 $"
 preamble_file = "math.typ"
 allow_local_imports = true
+packages = true
+package_cache = ".cache/typst"
             "##,
         )
         .unwrap();
@@ -554,6 +556,10 @@ allow_local_imports = true
             Some("#let sq(x) = $ #x^2 $\n#let cube(x) = $ #x^3 $")
         );
         assert_eq!(config.markdown.math.typst.local_import_root.as_deref(), Some(dir.as_path()));
+        assert_eq!(
+            config.markdown.math.typst.package_cache_dir.as_deref(),
+            Some(dir.join(".cache/typst").as_path())
+        );
 
         std::fs::remove_dir_all(dir).unwrap();
     }

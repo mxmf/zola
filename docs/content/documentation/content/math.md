@@ -77,6 +77,32 @@ preamble = '''
 
 Local imports are sandboxed to the config directory. Paths that would escape that directory are rejected.
 
+## Typst Universe packages
+
+Typst packages can be enabled explicitly:
+
+```toml
+[markdown.math]
+enabled = true
+engine = "typst"
+
+[markdown.math.typst]
+packages = true
+preamble = '''
+#import "@preview/physica:0.9.8": *
+'''
+```
+
+The first build downloads packages from `packages.typst.org` and caches them locally. By default, the cache directory is `.zola/typst-packages` relative to `config.toml`. You can override it:
+
+```toml
+[markdown.math.typst]
+packages = true
+package_cache = ".cache/typst-packages"
+```
+
+Subsequent builds reuse cached packages when available.
+
 ## HTML output
 
 The generated HTML contains MathML, wrapped in Zola-specific classes:

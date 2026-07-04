@@ -742,6 +742,7 @@ pub fn markdown_to_html(
                     &formula,
                     context.config.markdown.math.typst.preamble.as_deref(),
                     context.config.markdown.math.typst.local_import_root.as_deref(),
+                    context.config.markdown.math.typst.package_cache_dir.as_deref(),
                 ) {
                     Ok(html) => events.push(Event::Html(html.into())),
                     Err(err) => {
@@ -757,6 +758,7 @@ pub fn markdown_to_html(
                     &formula,
                     context.config.markdown.math.typst.preamble.as_deref(),
                     context.config.markdown.math.typst.local_import_root.as_deref(),
+                    context.config.markdown.math.typst.package_cache_dir.as_deref(),
                 ) {
                     Ok(html) => events.push(Event::Html(html.into())),
                     Err(err) => {

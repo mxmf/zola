@@ -1,9 +1,11 @@
 use errors::{Result, anyhow, bail};
 
+use flate2::read::GzDecoder;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::io::Cursor;
+use std::path::{Component, Path, PathBuf};
 use std::sync::{LazyLock, RwLock};
-use typst::diag::FileError;
+use typst::diag::{FileError, PackageError};
 use typst::foundations::{Bytes, Datetime, Duration};
 use typst::syntax::{FileId, RootedPath, Source, VirtualPath, VirtualRoot};
 use typst::text::{Font, FontBook};
@@ -30,6 +32,7 @@ struct MathCacheKey {
     mode: MathMode,
     preamble: String,
     local_import_root: Option<PathBuf>,
+    package_cache_dir: Option<PathBuf>,
 }
 
 static MATH_CACHE: LazyLock<RwLock<HashMap<MathCacheKey, String>>> =
@@ -77,17 +80,27 @@ struct MathWorld {
     main: FileId,
     source: Source,
     local_import_root: Option<PathBuf>,
+    package_cache_dir: Option<PathBuf>,
 }
 
 impl MathWorld {
-    fn new(source: String, local_import_root: Option<&Path>) -> Result<Self> {
+    fn new(
+        source: String,
+        local_import_root: Option<&Path>,
+        package_cache_dir: Option<&Path>,
+    ) -> Result<Self> {
         let path = RootedPath::new(
             VirtualRoot::Project,
             VirtualPath::new("/zola-math.typ").map_err(|e| anyhow!(e.to_string()))?,
         );
         let main = FileId::unique(path);
         let source = Source::new(main, source);
-        Ok(Self { main, source, local_import_root: local_import_root.map(Path::to_path_buf) })
+        Ok(Self {
+            main,
+            source,
+            local_import_root: local_import_root.map(Path::to_path_buf),
+            package_cache_dir: package_cache_dir.map(Path::to_path_buf),
+        })
     }
 
     fn resolve_local_path(&self, id: FileId) -> std::result::Result<PathBuf, FileError> {
@@ -106,6 +119,122 @@ impl MathWorld {
         }
         Ok(canonical)
     }
+
+    fn resolve_package_path(&self, id: FileId) -> std::result::Result<PathBuf, FileError> {
+        let VirtualRoot::Package(package) = id.root() else {
+            return Err(FileError::AccessDenied);
+        };
+        let Some(cache_dir) = &self.package_cache_dir else {
+            return Err(FileError::Package(PackageError::NotFound(package.clone())));
+        };
+
+        let package_dir = package_dir(cache_dir, package);
+        ensure_package(package, &package_dir)?;
+        let path = id.vpath().realize(&package_dir).map_err(FileError::Realize)?;
+        let canonical = path.canonicalize().map_err(|err| FileError::from_io(err, &path))?;
+        if !canonical.starts_with(&package_dir) {
+            return Err(FileError::AccessDenied);
+        }
+        Ok(canonical)
+    }
+
+    fn resolve_path(&self, id: FileId) -> std::result::Result<PathBuf, FileError> {
+        match id.root() {
+            VirtualRoot::Project => self.resolve_local_path(id),
+            VirtualRoot::Package(_) => self.resolve_package_path(id),
+        }
+    }
+}
+
+fn package_dir(cache_dir: &Path, package: &typst::syntax::package::PackageSpec) -> PathBuf {
+    cache_dir
+        .join(package.namespace.as_str())
+        .join(package.name.as_str())
+        .join(package.version.to_string())
+}
+
+fn ensure_package(
+    package: &typst::syntax::package::PackageSpec,
+    package_dir: &Path,
+) -> std::result::Result<(), FileError> {
+    if package_dir.exists() {
+        return Ok(());
+    }
+
+    let parent = package_dir.parent().ok_or_else(|| FileError::Other(None))?;
+    std::fs::create_dir_all(parent).map_err(|err| FileError::from_io(err, parent))?;
+
+    let temp_dir = parent.join(format!(".{}-{}-tmp", package.name, package.version));
+    if temp_dir.exists() {
+        std::fs::remove_dir_all(&temp_dir).map_err(|err| FileError::from_io(err, &temp_dir))?;
+    }
+    std::fs::create_dir_all(&temp_dir).map_err(|err| FileError::from_io(err, &temp_dir))?;
+
+    let result = download_and_unpack_package(package, &temp_dir).and_then(|()| {
+        std::fs::rename(&temp_dir, package_dir).map_err(|err| FileError::from_io(err, package_dir))
+    });
+
+    if result.is_err() && temp_dir.exists() {
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    result
+}
+
+fn download_and_unpack_package(
+    package: &typst::syntax::package::PackageSpec,
+    destination: &Path,
+) -> std::result::Result<(), FileError> {
+    let url = format!(
+        "https://packages.typst.org/{}/{}-{}.tar.gz",
+        package.namespace, package.name, package.version
+    );
+    let response = reqwest::blocking::get(&url).map_err(|err| {
+        FileError::Other(Some(format!("failed to download package {package}: {err}").into()))
+    })?;
+    if !response.status().is_success() {
+        return Err(FileError::Other(Some(
+            format!("failed to download package {package}: HTTP {}", response.status()).into(),
+        )));
+    }
+    let bytes = response.bytes().map_err(|err| {
+        FileError::Other(Some(format!("failed to read package {package}: {err}").into()))
+    })?;
+    let decoder = GzDecoder::new(Cursor::new(bytes));
+    let mut archive = tar::Archive::new(decoder);
+
+    for entry in archive.entries().map_err(|err| {
+        FileError::Other(Some(format!("failed to unpack package {package}: {err}").into()))
+    })? {
+        let mut entry = entry.map_err(|err| {
+            FileError::Other(Some(format!("failed to unpack package {package}: {err}").into()))
+        })?;
+        let path = entry.path().map_err(|err| {
+            FileError::Other(Some(format!("failed to unpack package {package}: {err}").into()))
+        })?;
+        let mut relative = PathBuf::new();
+        for component in path.components() {
+            match component {
+                Component::CurDir => {}
+                Component::Normal(component) => relative.push(component),
+                Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                    return Err(FileError::AccessDenied);
+                }
+            }
+        }
+        if relative.as_os_str().is_empty() {
+            continue;
+        }
+        let output = destination.join(relative);
+        if let Some(parent) = output.parent() {
+            std::fs::create_dir_all(parent).map_err(|err| FileError::from_io(err, parent))?;
+        }
+        entry.unpack(&output).map_err(|err| {
+            FileError::Other(Some(format!("failed to unpack package {package}: {err}").into()))
+        })?;
+    }
+
+    Ok(())
 }
 
 impl World for MathWorld {
@@ -125,7 +254,7 @@ impl World for MathWorld {
         if id == self.main {
             Ok(self.source.clone())
         } else {
-            let path = self.resolve_local_path(id)?;
+            let path = self.resolve_path(id)?;
             let source =
                 std::fs::read_to_string(&path).map_err(|err| FileError::from_io(err, &path))?;
             Ok(Source::new(id, source))
@@ -136,7 +265,7 @@ impl World for MathWorld {
         if id == self.main {
             Ok(Bytes::from_string(self.source.text().to_owned()))
         } else {
-            let path = self.resolve_local_path(id)?;
+            let path = self.resolve_path(id)?;
             std::fs::read(&path).map(Bytes::new).map_err(|err| FileError::from_io(err, &path))
         }
     }
@@ -155,6 +284,7 @@ fn render_math(
     mode: MathMode,
     preamble: Option<&str>,
     local_import_root: Option<&Path>,
+    package_cache_dir: Option<&Path>,
 ) -> Result<String> {
     let preamble = preamble.filter(|preamble| !preamble.trim().is_empty()).unwrap_or_default();
     let cache_key = MathCacheKey {
@@ -163,15 +293,16 @@ fn render_math(
         mode,
         preamble: preamble.to_owned(),
         local_import_root: local_import_root.map(Path::to_path_buf),
+        package_cache_dir: package_cache_dir.map(Path::to_path_buf),
     };
-    let use_cache = local_import_root.is_none();
+    let use_cache = local_import_root.is_none() && package_cache_dir.is_none();
 
     if use_cache && let Some(cached) = MATH_CACHE.read().unwrap().get(&cache_key).cloned() {
         return Ok(cached);
     }
 
     let source = mode.wrap_source(formula, Some(preamble));
-    let world = MathWorld::new(source, local_import_root)?;
+    let world = MathWorld::new(source, local_import_root, package_cache_dir)?;
     let warned = typst::compile::<HtmlDocument>(&world);
     let document = warned.output.map_err(|diagnostics| {
         let messages = diagnostics
@@ -219,16 +350,18 @@ pub fn render_inline_math(
     formula: &str,
     preamble: Option<&str>,
     local_import_root: Option<&Path>,
+    package_cache_dir: Option<&Path>,
 ) -> Result<String> {
-    render_math(formula, MathMode::Inline, preamble, local_import_root)
+    render_math(formula, MathMode::Inline, preamble, local_import_root, package_cache_dir)
 }
 
 pub fn render_display_math(
     formula: &str,
     preamble: Option<&str>,
     local_import_root: Option<&Path>,
+    package_cache_dir: Option<&Path>,
 ) -> Result<String> {
-    render_math(formula, MathMode::Display, preamble, local_import_root)
+    render_math(formula, MathMode::Display, preamble, local_import_root, package_cache_dir)
 }
 
 #[cfg(test)]
@@ -242,12 +375,13 @@ mod tests {
             mode,
             preamble: preamble.unwrap_or_default().to_owned(),
             local_import_root: None,
+            package_cache_dir: None,
         })
     }
 
     #[test]
     fn renders_inline_mathml() {
-        let html = render_inline_math("a^2 + b^2 = c^2", None, None).unwrap();
+        let html = render_inline_math("a^2 + b^2 = c^2", None, None, None).unwrap();
         assert!(html.contains("zola-math-inline"));
         assert!(html.contains("<math"));
         assert!(html.contains("</math>"));
@@ -255,7 +389,7 @@ mod tests {
 
     #[test]
     fn renders_display_mathml() {
-        let html = render_display_math("integral_0^1 x^2 dif x = 1 / 3", None, None).unwrap();
+        let html = render_display_math("integral_0^1 x^2 dif x = 1 / 3", None, None, None).unwrap();
         assert!(html.contains("zola-math-display"));
         assert!(html.contains("<math"));
         assert!(html.contains("display=\"block\""));
@@ -264,7 +398,7 @@ mod tests {
 
     #[test]
     fn invalid_formula_returns_error() {
-        let error = render_inline_math("sqrt(", None, None).unwrap_err();
+        let error = render_inline_math("sqrt(", None, None, None).unwrap_err();
         assert!(error.to_string().contains("Typst failed to compile math formula"));
         assert!(!cache_contains("sqrt(", MathMode::Inline, None));
     }
@@ -272,8 +406,8 @@ mod tests {
     #[test]
     fn caches_successful_renders() {
         let formula = "x^2 + y^2 + z^2";
-        let first = render_inline_math(formula, None, None).unwrap();
-        let second = render_inline_math(formula, None, None).unwrap();
+        let first = render_inline_math(formula, None, None, None).unwrap();
+        let second = render_inline_math(formula, None, None, None).unwrap();
 
         assert_eq!(first, second);
         assert!(cache_contains(formula, MathMode::Inline, None));
@@ -282,7 +416,7 @@ mod tests {
     #[test]
     fn renders_with_preamble() {
         let preamble = "#let sq(x) = $ #x^2 $";
-        let html = render_inline_math("sq(a)", Some(preamble), None).unwrap();
+        let html = render_inline_math("sq(a)", Some(preamble), None, None).unwrap();
 
         assert!(html.contains("zola-math-inline"));
         assert!(html.contains("<math"));
@@ -299,8 +433,8 @@ mod tests {
         std::fs::create_dir(&dir).unwrap();
         std::fs::write(dir.join("math.typ"), "#let sq(x) = $ #x^2 $").unwrap();
 
-        let html =
-            render_inline_math("sq(a)", Some("#import \"math.typ\": sq"), Some(&dir)).unwrap();
+        let html = render_inline_math("sq(a)", Some("#import \"math.typ\": sq"), Some(&dir), None)
+            .unwrap();
 
         assert!(html.contains("zola-math-inline"));
         assert!(html.contains("<math"));
@@ -319,10 +453,52 @@ mod tests {
         std::fs::create_dir(&dir).unwrap();
 
         let error =
-            render_inline_math("a", Some("#import \"../outside.typ\": *"), Some(&dir)).unwrap_err();
+            render_inline_math("a", Some("#import \"../outside.typ\": *"), Some(&dir), None)
+                .unwrap_err();
 
         assert!(error.to_string().contains("Typst failed to compile math formula"));
 
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn renders_with_cached_package() {
+        let unique = format!(
+            "zola-typst-math-package-test-{}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        );
+        let cache = std::env::temp_dir().join(unique);
+        let package = cache.join("preview/testpkg/0.1.0");
+        std::fs::create_dir_all(&package).unwrap();
+        std::fs::write(
+            package.join("typst.toml"),
+            r#"
+[package]
+name = "testpkg"
+version = "0.1.0"
+entrypoint = "lib.typ"
+authors = []
+"#,
+        )
+        .unwrap();
+        std::fs::write(package.join("lib.typ"), "#let sq(x) = $ #x^2 $").unwrap();
+
+        let html = render_inline_math(
+            "sq(a)",
+            Some("#import \"@preview/testpkg:0.1.0\": sq"),
+            None,
+            Some(&cache),
+        )
+        .unwrap();
+
+        assert!(html.contains("zola-math-inline"));
+        assert!(html.contains("<math"));
+        assert!(!cache_contains(
+            "sq(a)",
+            MathMode::Inline,
+            Some("#import \"@preview/testpkg:0.1.0\": sq")
+        ));
+
+        std::fs::remove_dir_all(cache).unwrap();
     }
 }
