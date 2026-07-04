@@ -741,6 +741,7 @@ pub fn markdown_to_html(
                 Event::InlineMath(formula) => match render_inline_math(
                     &formula,
                     context.config.markdown.math.typst.preamble.as_deref(),
+                    context.config.markdown.math.typst.local_import_root.as_deref(),
                 ) {
                     Ok(html) => events.push(Event::Html(html.into())),
                     Err(err) => {
@@ -755,6 +756,7 @@ pub fn markdown_to_html(
                 Event::DisplayMath(formula) => match render_display_math(
                     &formula,
                     context.config.markdown.math.typst.preamble.as_deref(),
+                    context.config.markdown.math.typst.local_import_root.as_deref(),
                 ) {
                     Ok(html) => events.push(Event::Html(html.into())),
                     Err(err) => {

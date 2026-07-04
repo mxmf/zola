@@ -59,6 +59,24 @@ preamble_file = "typst-math.typ"
 
 If both `preamble` and `preamble_file` are set, Zola prepends the inline `preamble` first, followed by the file contents.
 
+## Local Typst imports
+
+By default, formulas cannot import files. To allow imports from files inside the directory containing `config.toml`, enable local imports:
+
+```toml
+[markdown.math]
+enabled = true
+engine = "typst"
+
+[markdown.math.typst]
+allow_local_imports = true
+preamble = '''
+#import "typst/math.typ": *
+'''
+```
+
+Local imports are sandboxed to the config directory. Paths that would escape that directory are rejected.
+
 ## HTML output
 
 The generated HTML contains MathML, wrapped in Zola-specific classes:

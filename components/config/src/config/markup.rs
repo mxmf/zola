@@ -1,6 +1,6 @@
 use giallo::{HighlightOptions, Registry, ThemeVariant};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use errors::{Context, Result, bail};
 use utils::fs::read_file;
@@ -162,21 +162,30 @@ pub struct TypstMath {
     pub preamble: Option<String>,
     /// Path to a Typst preamble file, relative to the config file directory.
     pub preamble_file: Option<String>,
+    /// Whether Typst math can import files from the site directory.
+    pub allow_local_imports: bool,
+    /// Canonical root used to resolve local imports.
+    #[serde(skip)]
+    pub local_import_root: Option<PathBuf>,
 }
 
 impl TypstMath {
     pub fn init(&mut self, config_dir: &Path) -> Result<()> {
-        let Some(preamble_file) = &self.preamble_file else {
-            return Ok(());
-        };
+        if let Some(preamble_file) = &self.preamble_file {
+            let file_content = read_file(&config_dir.join(preamble_file))
+                .with_context(|| format!("Failed to load Typst math preamble `{preamble_file}`"))?;
 
-        let file_content = read_file(&config_dir.join(preamble_file))
-            .with_context(|| format!("Failed to load Typst math preamble `{preamble_file}`"))?;
+            self.preamble = Some(match self.preamble.take() {
+                Some(inline) if !inline.trim().is_empty() => format!("{inline}\n{file_content}"),
+                _ => file_content,
+            });
+        }
 
-        self.preamble = Some(match self.preamble.take() {
-            Some(inline) if !inline.trim().is_empty() => format!("{inline}\n{file_content}"),
-            _ => file_content,
-        });
+        if self.allow_local_imports {
+            self.local_import_root = Some(config_dir.canonicalize().with_context(|| {
+                format!("Failed to canonicalize Typst math import root `{}`", config_dir.display())
+            })?);
+        }
 
         Ok(())
     }
@@ -328,12 +337,14 @@ mod tests {
             [math.typst]
             preamble = "#let sq(x) = $ #x^2 $"
             preamble_file = "math.typ"
+            allow_local_imports = true
             "##,
         )
         .unwrap();
 
         assert_eq!(markdown.math.typst.preamble.as_deref(), Some("#let sq(x) = $ #x^2 $"));
         assert_eq!(markdown.math.typst.preamble_file.as_deref(), Some("math.typ"));
+        assert!(markdown.math.typst.allow_local_imports);
     }
 
     #[test]
@@ -349,6 +360,8 @@ mod tests {
         let mut typst = TypstMath {
             preamble: Some("#let sq(x) = $ #x^2 $".to_string()),
             preamble_file: Some("math.typ".to_string()),
+            allow_local_imports: false,
+            local_import_root: None,
         };
         typst.init(&dir).unwrap();
 
