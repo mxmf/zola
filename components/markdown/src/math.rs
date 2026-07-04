@@ -8,11 +8,13 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::{LazyLock, RwLock};
 use typst::diag::{FileError, PackageError};
 use typst::foundations::{Bytes, Datetime, Duration};
+use typst::layout::Abs;
 use typst::syntax::{FileId, RootedPath, Source, VirtualPath, VirtualRoot};
 use typst::text::{Font, FontBook};
 use typst::utils::LazyHash;
 use typst::{Feature, Features, Library, LibraryExt, World};
 use typst_html::{HtmlDocument, HtmlOptions};
+use typst_layout::PagedDocument;
 
 static TYPST_FONTS: LazyLock<Vec<Font>> =
     LazyLock::new(|| typst_assets::fonts().flat_map(|data| Font::iter(Bytes::new(data))).collect());
@@ -427,6 +429,26 @@ pub fn render_display_math(
     )
 }
 
+pub fn render_typst_svg(
+    source: &str,
+    local_import_root: Option<&Path>,
+    package_cache_dir: Option<&Path>,
+) -> Result<String> {
+    let world = MathWorld::new(source.to_owned(), local_import_root, package_cache_dir)?;
+    let warned = typst::compile::<PagedDocument>(&world);
+    let document = warned.output.map_err(|diagnostics| {
+        let messages = diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.message.to_string())
+            .collect::<Vec<_>>()
+            .join("; ");
+        anyhow!("Typst failed to compile SVG code block: {}", messages)
+    })?;
+
+    let svg = typst_svg::svg_merged(&document, &typst_svg::SvgOptions::default(), Abs::zero());
+    Ok(format!(r#"<div class="zola-typst-svg">{svg}</div>"#))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -442,6 +464,20 @@ mod tests {
             local_import_root: None,
             package_cache_dir: None,
         })
+    }
+
+    #[test]
+    fn renders_typst_svg() {
+        let svg = render_typst_svg(
+            "#set page(width: 20pt, height: 20pt, margin: 0pt)\n#circle(radius: 8pt)",
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert!(svg.contains("zola-typst-svg"));
+        assert!(svg.contains("<svg"));
+        assert!(svg.contains("</svg>"));
     }
 
     #[test]

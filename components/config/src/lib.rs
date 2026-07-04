@@ -10,7 +10,7 @@ pub use crate::config::{
     link_checker::LinkCheckerLevel,
     markup::{
         HighlightConfig, HighlightStyle, Highlighting, Markdown, Math, MathEngine, MathSyntax,
-        TypstMath,
+        TypstMath, TypstSvg,
     },
     search::{IndexFormat, Search},
     slugify::Slugify,

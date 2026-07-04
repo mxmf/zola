@@ -225,6 +225,13 @@ impl TypstMath {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TypstSvg {
+    /// Whether to render fenced `typst-svg` code blocks as inline SVG.
+    pub enabled: bool,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Markdown {
@@ -258,6 +265,8 @@ pub struct Markdown {
     pub github_alerts: bool,
     /// Math rendering configuration.
     pub math: Math,
+    /// Typst SVG code block rendering configuration.
+    pub typst_svg: TypstSvg,
 }
 
 impl Markdown {
@@ -330,6 +339,7 @@ impl Default for Markdown {
             insert_anchor_links: InsertAnchor::None,
             github_alerts: false,
             math: Math::default(),
+            typst_svg: TypstSvg::default(),
         }
     }
 }
@@ -345,6 +355,20 @@ mod tests {
         assert_eq!(markdown.math.engine, MathEngine::Typst);
         assert_eq!(markdown.math.syntax, MathSyntax::Typst);
         assert_eq!(markdown.math.typst, TypstMath::default());
+        assert!(!markdown.typst_svg.enabled);
+    }
+
+    #[test]
+    fn can_enable_typst_svg() {
+        let markdown: Markdown = toml::from_str(
+            r#"
+            [typst_svg]
+            enabled = true
+            "#,
+        )
+        .unwrap();
+
+        assert!(markdown.typst_svg.enabled);
     }
 
     #[test]

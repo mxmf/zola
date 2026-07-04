@@ -119,6 +119,8 @@ toml = "0.9"
 typst = "0.15"
 typst-assets = { version = "0.15", features = ["fonts"] }
 typst-html = "0.15"
+typst-layout = "0.15"
+typst-svg = "0.15"
 unic-langid = "0.9"
 unicode-segmentation = "1.2"
 url = "2"

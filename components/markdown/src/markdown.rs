@@ -11,7 +11,7 @@ use pulldown_cmark as cmark;
 use pulldown_cmark_escape as cmark_escape;
 
 use crate::context::RenderContext;
-use crate::math::{render_display_math, render_inline_math};
+use crate::math::{render_display_math, render_inline_math, render_typst_svg};
 use errors::{Context, Error, Result};
 use pulldown_cmark_escape::escape_html;
 use regex::{Regex, RegexBuilder};
@@ -580,7 +580,23 @@ pub fn markdown_to_html(
                 }
                 Event::End(TagEnd::CodeBlock) => {
                     let html = if let Some(code) = code_block.take() {
-                        if let Some(hl) = &context.config.markdown.highlighting {
+                        if context.config.markdown.typst_svg.enabled && code.lang == "typst-svg" {
+                            match render_typst_svg(
+                                &code_block_content,
+                                context.config.markdown.math.typst.local_import_root.as_deref(),
+                                context.config.markdown.math.typst.package_cache_dir.as_deref(),
+                            ) {
+                                Ok(svg) => svg,
+                                Err(err) => {
+                                    error = Some(Error::msg(format!(
+                                        "Failed to render Typst SVG code block in {}: {}",
+                                        context.current_page_path.unwrap_or("unknown"),
+                                        err
+                                    )));
+                                    String::new()
+                                }
+                            }
+                        } else if let Some(hl) = &context.config.markdown.highlighting {
                             if !hl.registry.contains_grammar(&code.lang) {
                                 let location = if let Some(p) = path {
                                     format!(" in {p:?}")
@@ -1036,6 +1052,20 @@ mod tests {
         assert!(rendered.body.contains("zola-math-inline"));
         assert!(rendered.body.contains("<math"));
         assert!(!rendered.body.contains("sq(a)"));
+    }
+
+    #[test]
+    fn renders_typst_svg_code_block() {
+        let mut config = Config::default();
+        config.markdown.typst_svg.enabled = true;
+        let context = RenderContext::from_config(&config);
+        let content = "```typst-svg\n#set page(width: 20pt, height: 20pt, margin: 0pt)\n#circle(radius: 8pt)\n```";
+
+        let rendered = markdown_to_html(content, &context, vec![]).unwrap();
+
+        assert!(rendered.body.contains("zola-typst-svg"));
+        assert!(rendered.body.contains("<svg"));
+        assert!(!rendered.body.contains("<pre><code"));
     }
 
     #[test]
