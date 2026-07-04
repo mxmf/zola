@@ -114,6 +114,9 @@ svg_metadata = "0.6"
 tera = { version = "1.17", features = ["preserve_order", "date-locale"] }
 time = "0.3"
 toml = "0.9"
+typst = "0.15"
+typst-assets = { version = "0.15", features = ["fonts"] }
+typst-html = "0.15"
 unic-langid = "0.9"
 unicode-segmentation = "1.2"
 url = "2"

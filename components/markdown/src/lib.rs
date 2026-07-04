@@ -1,5 +1,6 @@
 mod context;
 mod markdown;
+mod math;
 mod shortcode;
 
 use shortcode::{extract_shortcodes, insert_md_shortcodes};
