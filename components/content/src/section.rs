@@ -161,6 +161,7 @@ impl Section {
         );
         context.set_shortcode_definitions(shortcode_definitions);
         context.set_current_page_path(&self.file.relative);
+        context.set_current_page_file_path(&self.file.path);
         context
             .tera_context
             .insert("section", &SerializingSection::new(self, SectionSerMode::ForMarkdown));

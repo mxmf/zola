@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::path::Path;
 
 use config::Config;
 use tera::{Context, Tera};
@@ -13,6 +14,7 @@ pub struct RenderContext<'a> {
     pub config: &'a Config,
     pub tera_context: Context,
     pub current_page_path: Option<&'a str>,
+    pub current_page_file_path: Option<&'a Path>,
     pub current_page_permalink: &'a str,
     pub permalinks: Cow<'a, HashMap<String, String>>,
     pub insert_anchor: InsertAnchor,
@@ -37,6 +39,7 @@ impl<'a> RenderContext<'a> {
             tera: Cow::Borrowed(tera),
             tera_context,
             current_page_path: None,
+            current_page_file_path: None,
             current_page_permalink,
             permalinks: Cow::Borrowed(permalinks),
             insert_anchor,
@@ -57,6 +60,10 @@ impl<'a> RenderContext<'a> {
         self.current_page_path = Some(path);
     }
 
+    pub fn set_current_page_file_path(&mut self, path: &'a Path) {
+        self.current_page_file_path = Some(path);
+    }
+
     // In use in the markdown filter
     // NOTE: This RenderContext is not i18n-aware, see MarkdownFilter::filter for details
     // If this function is ever used outside of MarkdownFilter, take this into consideration
@@ -65,6 +72,7 @@ impl<'a> RenderContext<'a> {
             tera: Cow::Owned(Tera::default()),
             tera_context: Context::new(),
             current_page_path: None,
+            current_page_file_path: None,
             current_page_permalink: "",
             permalinks: Cow::Owned(HashMap::new()),
             insert_anchor: InsertAnchor::None,

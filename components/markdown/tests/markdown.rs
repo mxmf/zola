@@ -180,8 +180,10 @@ fn typst_svg_loads_files_relative_to_current_page() {
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
     );
     let root = std::env::temp_dir().join(unique);
-    let data_dir = root.join("charts/data");
+    let page_path = root.join("content/charts/page.md");
+    let data_dir = root.join("content/charts/data");
     std::fs::create_dir_all(&data_dir).unwrap();
+    std::fs::write(&page_path, "").unwrap();
     std::fs::write(data_dir.join("test.json"), r#"{"value": 42}"#).unwrap();
 
     let mut config = Config::default_for_test();
@@ -200,6 +202,7 @@ fn typst_svg_loads_files_relative_to_current_page() {
         InsertAnchor::None,
     );
     context.set_current_page_path("charts/page.md");
+    context.set_current_page_file_path(&page_path);
 
     let body = render_content(
         "```typst-svg\n#set page(width: 20pt, height: 20pt, margin: 0pt)\n#let data = json(\"data/test.json\")\n#text(str(data.value))\n```",

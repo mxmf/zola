@@ -1,7 +1,7 @@
 use config::{Math, MathSyntax};
 use errors::{Result, anyhow, bail};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::sync::{LazyLock, RwLock};
 use typst::diag::{FileError, PackageError};
 use typst::foundations::{Bytes, Datetime, Duration};
@@ -58,12 +58,15 @@ impl TypstWorld {
         Self::new_at(source, math, None)
     }
 
-    fn new_for_page(source: String, math: &Math, page_path: Option<&str>) -> Result<Self> {
+    fn new_for_page(source: String, math: &Math, page_path: Option<&Path>) -> Result<Self> {
         Self::new_at(source, math, page_path)
     }
 
-    fn new_at(source: String, math: &Math, page_path: Option<&str>) -> Result<Self> {
-        let path = RootedPath::new(VirtualRoot::Project, main_virtual_path(page_path)?);
+    fn new_at(source: String, math: &Math, page_path: Option<&Path>) -> Result<Self> {
+        let path = RootedPath::new(
+            VirtualRoot::Project,
+            main_virtual_path(math.import_root.as_deref(), page_path)?,
+        );
         let main = FileId::unique(path);
         Ok(Self {
             main,
@@ -104,21 +107,26 @@ impl TypstWorld {
     }
 }
 
-fn main_virtual_path(page_path: Option<&str>) -> Result<VirtualPath> {
-    let path = page_path
-        .map(str::trim)
-        .filter(|path| !path.is_empty())
-        .map(|path| {
-            let mut path = path.trim_start_matches('/').to_owned();
-            if let Some((stem, _)) = path.rsplit_once('.') {
-                path = format!("{stem}.typ");
-            } else {
-                path.push_str(".typ");
-            }
-            format!("/{path}")
-        })
-        .unwrap_or_else(|| "/zola-typst.typ".to_owned());
+fn main_virtual_path(import_root: Option<&Path>, page_path: Option<&Path>) -> Result<VirtualPath> {
+    let Some((root, page_path)) = import_root.zip(page_path) else {
+        return VirtualPath::new("/zola-typst.typ").map_err(|e| anyhow!(e.to_string()));
+    };
 
+    let page_path = page_path.canonicalize().map_err(|e| anyhow!(e.to_string()))?;
+    let relative = page_path.strip_prefix(root).map_err(|e| anyhow!(e.to_string()))?;
+    let mut typst_path = PathBuf::from("/");
+    for component in relative.components() {
+        match component {
+            Component::Normal(component) => typst_path.push(component),
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                bail!("Typst SVG source path must stay within the site root");
+            }
+        }
+    }
+    typst_path.set_extension("typ");
+
+    let path = typst_path.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
     VirtualPath::new(&path).map_err(|e| anyhow!(e.to_string()))
 }
 
@@ -233,7 +241,7 @@ fn render_math(formula: &str, mode: Mode, math: &Math) -> Result<String> {
     Ok(html)
 }
 
-pub fn render_svg(source: &str, math: &Math, page_path: Option<&str>) -> Result<String> {
+pub fn render_svg(source: &str, math: &Math, page_path: Option<&Path>) -> Result<String> {
     let world = TypstWorld::new_for_page(source.to_owned(), math, page_path)?;
     let doc = typst::compile::<PagedDocument>(&world).output.map_err(|diagnostics| {
         anyhow!(
