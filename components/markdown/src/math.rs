@@ -55,10 +55,15 @@ struct TypstWorld {
 
 impl TypstWorld {
     fn new(source: String, math: &Math) -> Result<Self> {
-        let path = RootedPath::new(
-            VirtualRoot::Project,
-            VirtualPath::new("/zola-typst.typ").map_err(|e| anyhow!(e.to_string()))?,
-        );
+        Self::new_at(source, math, None)
+    }
+
+    fn new_for_page(source: String, math: &Math, page_path: Option<&str>) -> Result<Self> {
+        Self::new_at(source, math, page_path)
+    }
+
+    fn new_at(source: String, math: &Math, page_path: Option<&str>) -> Result<Self> {
+        let path = RootedPath::new(VirtualRoot::Project, main_virtual_path(page_path)?);
         let main = FileId::unique(path);
         Ok(Self {
             main,
@@ -97,6 +102,24 @@ impl TypstWorld {
         let path = path.canonicalize().map_err(|e| FileError::from_io(e, &path))?;
         if path.starts_with(&root) { Ok(path) } else { Err(FileError::AccessDenied) }
     }
+}
+
+fn main_virtual_path(page_path: Option<&str>) -> Result<VirtualPath> {
+    let path = page_path
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(|path| {
+            let mut path = path.trim_start_matches('/').to_owned();
+            if let Some((stem, _)) = path.rsplit_once('.') {
+                path = format!("{stem}.typ");
+            } else {
+                path.push_str(".typ");
+            }
+            format!("/{path}")
+        })
+        .unwrap_or_else(|| "/zola-typst.typ".to_owned());
+
+    VirtualPath::new(&path).map_err(|e| anyhow!(e.to_string()))
 }
 
 fn package_root(
@@ -210,8 +233,8 @@ fn render_math(formula: &str, mode: Mode, math: &Math) -> Result<String> {
     Ok(html)
 }
 
-pub fn render_svg(source: &str, math: &Math) -> Result<String> {
-    let world = TypstWorld::new(source.to_owned(), math)?;
+pub fn render_svg(source: &str, math: &Math, page_path: Option<&str>) -> Result<String> {
+    let world = TypstWorld::new_for_page(source.to_owned(), math, page_path)?;
     let doc = typst::compile::<PagedDocument>(&world).output.map_err(|diagnostics| {
         anyhow!(
             "Typst failed to compile SVG code block: {}",

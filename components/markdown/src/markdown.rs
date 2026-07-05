@@ -583,6 +583,7 @@ pub fn markdown_to_html(
                             match math::render_svg(
                                 &code_block_content,
                                 &context.config.markdown.math,
+                                context.current_page_path,
                             ) {
                                 Ok(svg) => svg,
                                 Err(err) => {

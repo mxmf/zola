@@ -174,6 +174,47 @@ fn can_render_typst_svg_code_block() {
 }
 
 #[test]
+fn typst_svg_loads_files_relative_to_current_page() {
+    let unique = format!(
+        "zola-typst-svg-test-{}",
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+    );
+    let root = std::env::temp_dir().join(unique);
+    let data_dir = root.join("charts/data");
+    std::fs::create_dir_all(&data_dir).unwrap();
+    std::fs::write(data_dir.join("test.json"), r#"{"value": 42}"#).unwrap();
+
+    let mut config = Config::default_for_test();
+    config.markdown.typst_svg.enabled = true;
+    config.markdown.math.allow_local_imports = true;
+    config.markdown.math.import_root = Some(root.canonicalize().unwrap());
+
+    let tera = Tera::default();
+    let permalinks = HashMap::new();
+    let mut context = RenderContext::new(
+        &tera,
+        &config,
+        &config.default_language,
+        "",
+        &permalinks,
+        InsertAnchor::None,
+    );
+    context.set_current_page_path("charts/page.md");
+
+    let body = render_content(
+        "```typst-svg\n#set page(width: 20pt, height: 20pt, margin: 0pt)\n#let data = json(\"data/test.json\")\n#text(str(data.value))\n```",
+        &context,
+    )
+    .unwrap()
+    .body;
+
+    assert!(body.contains("zola-typst-svg"));
+    assert!(body.contains("<svg"));
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn can_use_smart_punctuation() {
     let mut config = Config::default_for_test();
     config.markdown.smart_punctuation = true;
