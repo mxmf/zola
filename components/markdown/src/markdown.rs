@@ -585,6 +585,7 @@ pub fn markdown_to_html(
                                 &code_block_content,
                                 context.config.markdown.math.typst.local_import_root.as_deref(),
                                 context.config.markdown.math.typst.package_cache_dir.as_deref(),
+                                context.current_page_path,
                             ) {
                                 Ok(svg) => svg,
                                 Err(err) => {

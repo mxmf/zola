@@ -116,10 +116,25 @@ impl MathWorld {
         local_import_root: Option<&Path>,
         package_cache_dir: Option<&Path>,
     ) -> Result<Self> {
-        let path = RootedPath::new(
-            VirtualRoot::Project,
-            VirtualPath::new("/zola-math.typ").map_err(|e| anyhow!(e.to_string()))?,
-        );
+        Self::new_at(source, local_import_root, package_cache_dir, None)
+    }
+
+    fn new_for_page(
+        source: String,
+        local_import_root: Option<&Path>,
+        package_cache_dir: Option<&Path>,
+        page_path: Option<&str>,
+    ) -> Result<Self> {
+        Self::new_at(source, local_import_root, package_cache_dir, page_path)
+    }
+
+    fn new_at(
+        source: String,
+        local_import_root: Option<&Path>,
+        package_cache_dir: Option<&Path>,
+        page_path: Option<&str>,
+    ) -> Result<Self> {
+        let path = RootedPath::new(VirtualRoot::Project, main_virtual_path(page_path)?);
         let main = FileId::unique(path);
         let source = Source::new(main, source);
         Ok(Self {
@@ -170,6 +185,24 @@ impl MathWorld {
             VirtualRoot::Package(_) => self.resolve_package_path(id),
         }
     }
+}
+
+fn main_virtual_path(page_path: Option<&str>) -> Result<VirtualPath> {
+    let path = page_path
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(|path| {
+            let mut path = path.trim_start_matches('/').to_owned();
+            if let Some((stem, _)) = path.rsplit_once('.') {
+                path = format!("{stem}.typ");
+            } else {
+                path.push_str(".typ");
+            }
+            format!("/{path}")
+        })
+        .unwrap_or_else(|| "/zola-math.typ".to_owned());
+
+    VirtualPath::new(&path).map_err(|e| anyhow!(e.to_string()))
 }
 
 fn typst_raw_string(value: &str) -> String {
@@ -370,8 +403,14 @@ pub fn render_typst_svg(
     source: &str,
     local_import_root: Option<&Path>,
     package_cache_dir: Option<&Path>,
+    page_path: Option<&str>,
 ) -> Result<String> {
-    let world = MathWorld::new(source.to_owned(), local_import_root, package_cache_dir)?;
+    let world = MathWorld::new_for_page(
+        source.to_owned(),
+        local_import_root,
+        package_cache_dir,
+        page_path,
+    )?;
     let warned = typst::compile::<PagedDocument>(&world);
     let document = warned.output.map_err(|diagnostics| {
         let messages = diagnostics
@@ -407,6 +446,7 @@ mod tests {
     fn renders_typst_svg() {
         let svg = render_typst_svg(
             "#set page(width: 20pt, height: 20pt, margin: 0pt)\n#circle(radius: 8pt)",
+            None,
             None,
             None,
         )
