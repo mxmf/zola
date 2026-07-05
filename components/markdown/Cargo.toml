@@ -13,6 +13,12 @@ pulldown-cmark = { workspace = true }
 pulldown-cmark-escape = { workspace = true }
 regex = { workspace = true }
 tera = { workspace = true }
+typst = { workspace = true }
+typst-assets = { workspace = true }
+typst-html = { workspace = true }
+typst-kit = { workspace = true }
+typst-layout = { workspace = true }
+typst-svg = { workspace = true }
 giallo = { workspace = true }
 log = { workspace = true }
 

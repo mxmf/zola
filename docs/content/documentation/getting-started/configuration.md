@@ -176,6 +176,21 @@ github_alerts = false
 # See "Internal links & deep linking" in the documentation for more information.
 insert_anchor_links = "none"
 
+# Typst-powered math rendering. Formulas use Typst syntax by default and render to MathML.
+[markdown.math]
+enabled = false
+# syntax = "typst" # or "latex" with [markdown.math].packages = true
+# preamble = "#let sq(x) = $ #x^2 $"
+# preamble_file = "typst-math.typ"
+# allow_local_imports = false
+# packages = false
+# package_cache = ".zola/typst-packages" # downloads missing @preview packages into this cache
+# mitex_version = "0.2.7"
+
+# Render fenced `typst-svg` code blocks to inline SVG.
+[markdown.typst_svg]
+enabled = false
+
 # Syntax highlighting configuration (optional)
 [markdown.highlighting]
 # When set to "true", missing highlight languages are treated as errors. Defaults to false but recommended to set to true.

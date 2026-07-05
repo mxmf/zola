@@ -8,7 +8,7 @@ pub use crate::config::{
     languages::LanguageOptions,
     link_checker::LinkChecker,
     link_checker::LinkCheckerLevel,
-    markup::{HighlightConfig, HighlightStyle, Highlighting, Markdown},
+    markup::{HighlightConfig, HighlightStyle, Highlighting, Markdown, Math, MathSyntax, TypstSvg},
     search::{IndexFormat, Search},
     slugify::Slugify,
     taxonomies::TaxonomyConfig,

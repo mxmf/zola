@@ -145,6 +145,35 @@ fn can_customise_summary_template() {
 }
 
 #[test]
+fn math_is_not_rendered_by_default() {
+    let body = common::render("Inline $a^2$.").unwrap().body;
+    assert!(body.contains("$a^2$"));
+}
+
+#[test]
+fn can_render_typst_math() {
+    let mut config = Config::default_for_test();
+    config.markdown.math.enabled = true;
+    let body = common::render_with_config("Inline $a^2$.", config).unwrap().body;
+    assert!(body.contains("zola-math-inline"));
+    assert!(body.contains("<math"));
+}
+
+#[test]
+fn can_render_typst_svg_code_block() {
+    let mut config = Config::default_for_test();
+    config.markdown.typst_svg.enabled = true;
+    let body = common::render_with_config(
+        "```typst-svg\n#set page(width: 20pt, height: 20pt, margin: 0pt)\n#circle(radius: 8pt)\n```",
+        config,
+    )
+    .unwrap()
+    .body;
+    assert!(body.contains("zola-typst-svg"));
+    assert!(body.contains("<svg"));
+}
+
+#[test]
 fn can_use_smart_punctuation() {
     let mut config = Config::default_for_test();
     config.markdown.smart_punctuation = true;
@@ -464,16 +493,16 @@ fn github_alerts() {
     config.markdown.github_alerts = true;
 
     let markdown = r#"
-> [!NOTE]  
+> [!NOTE]
 > alert note
 
 > [!TIP]
 > alert tip
 
-> [!IMPORTANT]  
+> [!IMPORTANT]
 > alert important
 
-> [!WARNING]  
+> [!WARNING]
 > alert warning
 
 > [!CAUTION]

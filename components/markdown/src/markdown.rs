@@ -11,6 +11,7 @@ use pulldown_cmark as cmark;
 use pulldown_cmark_escape as cmark_escape;
 
 use crate::context::RenderContext;
+use crate::math;
 use errors::{Context, Error, Result};
 use pulldown_cmark_escape::escape_html;
 use regex::{Regex, RegexBuilder};
@@ -440,6 +441,9 @@ pub fn markdown_to_html(
     opts.insert(Options::ENABLE_TASKLISTS);
     opts.insert(Options::ENABLE_HEADING_ATTRIBUTES);
 
+    if context.config.markdown.math.enabled {
+        opts.insert(Options::ENABLE_MATH);
+    }
     if context.config.markdown.smart_punctuation {
         opts.insert(Options::ENABLE_SMART_PUNCTUATION);
     }
@@ -575,7 +579,22 @@ pub fn markdown_to_html(
                 }
                 Event::End(TagEnd::CodeBlock) => {
                     let html = if let Some(code) = code_block.take() {
-                        if let Some(hl) = &context.config.markdown.highlighting {
+                        if context.config.markdown.typst_svg.enabled && code.lang == "typst-svg" {
+                            match math::render_svg(
+                                &code_block_content,
+                                &context.config.markdown.math,
+                            ) {
+                                Ok(svg) => svg,
+                                Err(err) => {
+                                    error = Some(Error::msg(format!(
+                                        "Failed to render Typst SVG code block in {}: {}",
+                                        context.current_page_path.unwrap_or("unknown"),
+                                        err
+                                    )));
+                                    String::new()
+                                }
+                            }
+                        } else if let Some(hl) = &context.config.markdown.highlighting {
                             if !hl.registry.contains_grammar(&code.lang) {
                                 let location = if let Some(p) = path {
                                     format!(" in {p:?}")
@@ -732,6 +751,32 @@ pub fn markdown_to_html(
                     } else {
                         event
                     });
+                }
+                Event::InlineMath(formula) => {
+                    match math::render_inline(&formula, &context.config.markdown.math) {
+                        Ok(html) => events.push(Event::Html(html.into())),
+                        Err(err) => {
+                            error = Some(Error::msg(format!(
+                                "Failed to render inline Typst math in {}: {}",
+                                context.current_page_path.unwrap_or("unknown"),
+                                err
+                            )));
+                            events.push(Event::Html("".into()));
+                        }
+                    }
+                }
+                Event::DisplayMath(formula) => {
+                    match math::render_display(&formula, &context.config.markdown.math) {
+                        Ok(html) => events.push(Event::Html(html.into())),
+                        Err(err) => {
+                            error = Some(Error::msg(format!(
+                                "Failed to render display Typst math in {}: {}",
+                                context.current_page_path.unwrap_or("unknown"),
+                                err
+                            )));
+                            events.push(Event::Html("".into()));
+                        }
+                    }
                 }
                 Event::Html(text) | Event::InlineHtml(text)
                     if !has_summary && MORE_DIVIDER_RE.is_match(text.as_ref()) =>

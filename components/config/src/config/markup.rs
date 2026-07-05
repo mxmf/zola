@@ -1,8 +1,9 @@
 use giallo::{HighlightOptions, Registry, ThemeVariant};
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use errors::{Result, bail};
+use errors::{Context, Result, bail};
+use utils::fs::read_file;
 use utils::types::InsertAnchor;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -131,6 +132,66 @@ impl Highlighting {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MathSyntax {
+    Typst,
+    Latex,
+}
+
+impl Default for MathSyntax {
+    fn default() -> Self {
+        Self::Typst
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Math {
+    pub enabled: bool,
+    pub syntax: MathSyntax,
+    pub preamble: Option<String>,
+    pub preamble_file: Option<String>,
+    pub allow_local_imports: bool,
+    pub packages: bool,
+    pub package_cache: Option<String>,
+    pub mitex_version: Option<String>,
+    #[serde(skip)]
+    pub import_root: Option<PathBuf>,
+    #[serde(skip)]
+    pub package_cache_dir: Option<PathBuf>,
+}
+
+impl Math {
+    pub fn init(&mut self, config_dir: &Path) -> Result<()> {
+        if let Some(file) = &self.preamble_file {
+            let content = read_file(&config_dir.join(file))
+                .with_context(|| format!("Failed to load Typst math preamble `{file}`"))?;
+            self.preamble = Some(match self.preamble.take() {
+                Some(inline) if !inline.trim().is_empty() => format!("{inline}\n{content}"),
+                _ => content,
+            });
+        }
+        if self.allow_local_imports {
+            self.import_root = Some(config_dir.canonicalize().with_context(|| {
+                format!("Failed to canonicalize Typst math import root `{}`", config_dir.display())
+            })?);
+        }
+        if self.packages {
+            self.package_cache_dir = Some(
+                config_dir.join(self.package_cache.as_deref().unwrap_or(".zola/typst-packages")),
+            );
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TypstSvg {
+    pub enabled: bool,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Markdown {
@@ -162,6 +223,10 @@ pub struct Markdown {
     pub insert_anchor_links: InsertAnchor,
     /// Whether to enable GitHub-style alerts
     pub github_alerts: bool,
+    /// Typst-powered math rendering.
+    pub math: Math,
+    /// Typst SVG code block rendering.
+    pub typst_svg: TypstSvg,
 }
 
 impl Markdown {
@@ -233,6 +298,8 @@ impl Default for Markdown {
             lazy_async_image: false,
             insert_anchor_links: InsertAnchor::None,
             github_alerts: false,
+            math: Math::default(),
+            typst_svg: TypstSvg::default(),
         }
     }
 }

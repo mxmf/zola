@@ -192,6 +192,7 @@ impl Config {
             highlight.init(config_dir)?;
         }
 
+        config.markdown.math.init(config_dir)?;
         config.markdown.validate_external_links_class()?;
 
         Ok(config)
