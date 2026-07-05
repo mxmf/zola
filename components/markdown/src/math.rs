@@ -1,10 +1,8 @@
 use config::MathSyntax;
 use errors::{Result, anyhow, bail};
 
-use flate2::read::GzDecoder;
 use std::collections::HashMap;
-use std::io::Cursor;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, RwLock};
 use typst::diag::{FileError, PackageError};
 use typst::foundations::{Bytes, Datetime, Duration};
@@ -14,6 +12,8 @@ use typst::text::{Font, FontBook};
 use typst::utils::LazyHash;
 use typst::{Feature, Features, Library, LibraryExt, World};
 use typst_html::{HtmlDocument, HtmlOptions};
+use typst_kit::downloader::SystemDownloader;
+use typst_kit::packages::{FsPackages, UniversePackages};
 use typst_layout::PagedDocument;
 
 static TYPST_FONTS: LazyLock<Vec<Font>> =
@@ -43,6 +43,9 @@ struct MathCacheKey {
 
 static MATH_CACHE: LazyLock<RwLock<HashMap<MathCacheKey, String>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
+
+static UNIVERSE_PACKAGES: LazyLock<UniversePackages> =
+    LazyLock::new(|| UniversePackages::new(SystemDownloader::new("zola")));
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum MathMode {
@@ -152,11 +155,10 @@ impl MathWorld {
             return Err(FileError::Package(PackageError::NotFound(package.clone())));
         };
 
-        let package_dir = package_dir(cache_dir, package);
-        ensure_package(package, &package_dir)?;
-        let path = id.vpath().realize(&package_dir).map_err(FileError::Realize)?;
+        let root = package_root(cache_dir, package)?;
+        let path = id.vpath().realize(&root).map_err(FileError::Realize)?;
         let canonical = path.canonicalize().map_err(|err| FileError::from_io(err, &path))?;
-        if !canonical.starts_with(&package_dir) {
+        if !canonical.starts_with(&root) {
             return Err(FileError::AccessDenied);
         }
         Ok(canonical)
@@ -186,95 +188,30 @@ fn typst_raw_string(value: &str) -> String {
     format!("{delimiter}{value}{delimiter}")
 }
 
-fn package_dir(cache_dir: &Path, package: &typst::syntax::package::PackageSpec) -> PathBuf {
-    cache_dir
-        .join(package.namespace.as_str())
-        .join(package.name.as_str())
-        .join(package.version.to_string())
-}
-
-fn ensure_package(
+fn package_root(
+    cache_dir: &Path,
     package: &typst::syntax::package::PackageSpec,
-    package_dir: &Path,
-) -> std::result::Result<(), FileError> {
-    if package_dir.exists() {
-        return Ok(());
+) -> std::result::Result<PathBuf, FileError> {
+    let fs = FsPackages::new(cache_dir.to_path_buf());
+    if let Some(root) = fs.obtain(package) {
+        return Ok(root.path().to_path_buf());
     }
 
-    let parent = package_dir.parent().ok_or_else(|| FileError::Other(None))?;
-    std::fs::create_dir_all(parent).map_err(|err| FileError::from_io(err, parent))?;
+    if package.namespace == UniversePackages::NAMESPACE {
+        let mut archive = UNIVERSE_PACKAGES.package(package).map_err(FileError::Package)?;
+        fs.store(package, |tempdir| {
+            archive
+                .unpack(tempdir)
+                .map_err(|err| PackageError::MalformedArchive(Some(format!("{err}").into())))
+        })
+        .map_err(FileError::Package)?;
 
-    let temp_dir = parent.join(format!(".{}-{}-tmp", package.name, package.version));
-    if temp_dir.exists() {
-        std::fs::remove_dir_all(&temp_dir).map_err(|err| FileError::from_io(err, &temp_dir))?;
-    }
-    std::fs::create_dir_all(&temp_dir).map_err(|err| FileError::from_io(err, &temp_dir))?;
-
-    let result = download_and_unpack_package(package, &temp_dir).and_then(|()| {
-        std::fs::rename(&temp_dir, package_dir).map_err(|err| FileError::from_io(err, package_dir))
-    });
-
-    if result.is_err() && temp_dir.exists() {
-        let _ = std::fs::remove_dir_all(&temp_dir);
-    }
-
-    result
-}
-
-fn download_and_unpack_package(
-    package: &typst::syntax::package::PackageSpec,
-    destination: &Path,
-) -> std::result::Result<(), FileError> {
-    let url = format!(
-        "https://packages.typst.org/{}/{}-{}.tar.gz",
-        package.namespace, package.name, package.version
-    );
-    let response = reqwest::blocking::get(&url).map_err(|err| {
-        FileError::Other(Some(format!("failed to download package {package}: {err}").into()))
-    })?;
-    if !response.status().is_success() {
-        return Err(FileError::Other(Some(
-            format!("failed to download package {package}: HTTP {}", response.status()).into(),
-        )));
-    }
-    let bytes = response.bytes().map_err(|err| {
-        FileError::Other(Some(format!("failed to read package {package}: {err}").into()))
-    })?;
-    let decoder = GzDecoder::new(Cursor::new(bytes));
-    let mut archive = tar::Archive::new(decoder);
-
-    for entry in archive.entries().map_err(|err| {
-        FileError::Other(Some(format!("failed to unpack package {package}: {err}").into()))
-    })? {
-        let mut entry = entry.map_err(|err| {
-            FileError::Other(Some(format!("failed to unpack package {package}: {err}").into()))
-        })?;
-        let path = entry.path().map_err(|err| {
-            FileError::Other(Some(format!("failed to unpack package {package}: {err}").into()))
-        })?;
-        let mut relative = PathBuf::new();
-        for component in path.components() {
-            match component {
-                Component::CurDir => {}
-                Component::Normal(component) => relative.push(component),
-                Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                    return Err(FileError::AccessDenied);
-                }
-            }
+        if let Some(root) = fs.obtain(package) {
+            return Ok(root.path().to_path_buf());
         }
-        if relative.as_os_str().is_empty() {
-            continue;
-        }
-        let output = destination.join(relative);
-        if let Some(parent) = output.parent() {
-            std::fs::create_dir_all(parent).map_err(|err| FileError::from_io(err, parent))?;
-        }
-        entry.unpack(&output).map_err(|err| {
-            FileError::Other(Some(format!("failed to unpack package {package}: {err}").into()))
-        })?;
     }
 
-    Ok(())
+    Err(FileError::Package(PackageError::NotFound(package.clone())))
 }
 
 impl World for MathWorld {
