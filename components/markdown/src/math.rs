@@ -17,6 +17,7 @@ use typst_layout::PagedDocument;
 
 const CACHE_VERSION: u8 = 1;
 const DEFAULT_MITEX_VERSION: &str = "0.2.7";
+const DEFAULT_SVG_PAGE: &str = "#set page(width: auto, height: auto, margin: 0pt)";
 
 static FONTS: LazyLock<Vec<Font>> =
     LazyLock::new(|| typst_assets::fonts().flat_map(|data| Font::iter(Bytes::new(data))).collect());
@@ -242,7 +243,8 @@ fn render_math(formula: &str, mode: Mode, math: &Math) -> Result<String> {
 }
 
 pub fn render_svg(source: &str, math: &Math, page_path: Option<&Path>) -> Result<String> {
-    let world = TypstWorld::new_for_page(source.to_owned(), math, page_path)?;
+    let source = format!("{DEFAULT_SVG_PAGE}\n{source}");
+    let world = TypstWorld::new_for_page(source, math, page_path)?;
     let doc = typst::compile::<PagedDocument>(&world).output.map_err(|diagnostics| {
         anyhow!(
             "Typst failed to compile SVG code block: {}",

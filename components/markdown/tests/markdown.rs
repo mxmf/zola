@@ -174,6 +174,16 @@ fn can_render_typst_svg_code_block() {
 }
 
 #[test]
+fn typst_svg_uses_auto_page_by_default() {
+    let mut config = Config::default_for_test();
+    config.markdown.typst_svg.enabled = true;
+    let body =
+        common::render_with_config("```typst-svg\n#circle(radius: 8pt)\n```", config).unwrap().body;
+    assert!(body.contains("zola-typst-svg"));
+    assert!(body.contains("<svg"));
+}
+
+#[test]
 fn typst_svg_loads_files_relative_to_current_page() {
     let unique = format!(
         "zola-typst-svg-test-{}",
